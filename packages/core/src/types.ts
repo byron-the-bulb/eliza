@@ -815,6 +815,7 @@ export type Character = {
         };
         transcription?: TranscriptionProvider;
         ragKnowledge?: boolean;
+        zeRagKnowledge?: boolean;
     };
 
     /** Optional client-specific config */

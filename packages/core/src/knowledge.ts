@@ -20,7 +20,7 @@ async function get(
     }
 
     const processed = preprocess(message.content.text);
-    elizaLogger.debug("Knowledge query:", {
+    elizaLogger.log("Knowledge query:", {
         original: message.content.text,
         processed,
         length: processed?.length,
@@ -33,6 +33,12 @@ async function get(
     }
 
     const embedding = await embed(runtime, processed);
+    const float32embed = new Float32Array(embedding);
+    const buffer = Buffer.from(float32embed.buffer);
+    const hexString = buffer.toString('hex');
+
+    const blobLiteral = `X'${hexString}'`;
+    elizaLogger.log("Embedding generated for query:", blobLiteral);
     const fragments = await runtime.knowledgeManager.searchMemoriesByEmbedding(
         embedding,
         {

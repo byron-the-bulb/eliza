@@ -25,6 +25,7 @@ import { parseJsonArrayFromText } from "./parsing.ts";
 import { formatPosts } from "./posts.ts";
 import { getProviders } from "./providers.ts";
 import { RAGKnowledgeManager } from "./ragknowledge.ts";
+import { ZeroEntropyRAGKnowledgeManager } from "./zeRagknowledge.ts";
 import settings from "./settings.ts";
 import {
     Character,
@@ -242,6 +243,7 @@ export class AgentRuntime implements IAgentRuntime {
         cacheManager: ICacheManager;
         logging?: boolean;
         verifiableInferenceAdapter?: IVerifiableInferenceAdapter;
+        ragKnowledgeManager?: IRAGKnowledgeManager;
     }) {
         elizaLogger.info("Initializing AgentRuntime with options:", {
             character: opts.character?.name,
@@ -306,7 +308,10 @@ export class AgentRuntime implements IAgentRuntime {
             tableName: "fragments",
         });
 
-        this.ragKnowledgeManager = new RAGKnowledgeManager({
+        this.ragKnowledgeManager = (this.character.settings.zeRagKnowledge) ? new ZeroEntropyRAGKnowledgeManager({
+            runtime: this,
+            tableName: "knowledge",
+        }) : new RAGKnowledgeManager({
             runtime: this,
             tableName: "knowledge",
         });
@@ -351,7 +356,7 @@ export class AgentRuntime implements IAgentRuntime {
 
         elizaLogger.info("Selected model provider:", this.modelProvider);
         elizaLogger.info(
-            "Selected image model provider:",
+            "Selected image vision model provider:",
             this.imageVisionModelProvider
         );
 
@@ -438,7 +443,7 @@ export class AgentRuntime implements IAgentRuntime {
             this.character.knowledge &&
             this.character.knowledge.length > 0
         ) {
-            if (this.character.settings.ragKnowledge) {
+            if (this.character.settings.ragKnowledge || this.character.settings.zeRagKnowledge) {
                 await this.processCharacterRAGKnowledge(
                     this.character.knowledge
                 );
@@ -519,6 +524,7 @@ export class AgentRuntime implements IAgentRuntime {
         let hasError = false;
 
         for (const item of items) {
+            elizaLogger.info("procession character rag knowledge", item);
             if (!item) continue;
 
             try {
@@ -1203,7 +1209,7 @@ Text: ${attachment.text}
         let knowledgeData = [];
         let formattedKnowledge = "";
 
-        if (this.character.settings?.ragKnowledge) {
+        if (this.character.settings?.ragKnowledge || this.character.settings?.zeRagKnowledge) {
             const recentContext = recentMessagesData
                 .slice(-3) // Last 3 messages
                 .map((msg) => msg.content.text)
@@ -1212,7 +1218,7 @@ Text: ${attachment.text}
             knowledgeData = await this.ragKnowledgeManager.getKnowledge({
                 query: message.content.text,
                 conversationContext: recentContext,
-                limit: 5,
+                limit: 8,
             });
 
             formattedKnowledge = formatKnowledge(knowledgeData);
