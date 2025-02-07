@@ -235,6 +235,51 @@ class GoogleImageProvider implements ImageProvider {
     }
 }
 
+class GrokImageProvider implements ImageProvider {
+    constructor(private runtime: IAgentRuntime) {}
+
+    async initialize(): Promise<void> {
+        // No extra initialization required at this time
+    }
+
+    async describeImage(
+        imageData: Buffer,
+        mimeType: string
+    ): Promise<{ title: string; description: string }> {
+        const imageUrl = convertToBase64DataUrl(imageData, mimeType);
+        const content = [
+            { type: "text", text: IMAGE_DESCRIPTION_PROMPT },
+            { type: "image_url", image_url: { url: imageUrl } },
+        ];
+
+        // Use the Grok endpoint if defined; otherwise default to a placeholder URL.
+        const endpoint =
+            this.runtime.imageVisionModelProvider === ModelProviderName.GROK
+                ? getEndpoint(this.runtime.imageVisionModelProvider)
+                : "https://api.x.ai/v1";
+
+        const response = await fetch(endpoint + "/chat/completions", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${this.runtime.getSetting("GROK_API_KEY")}`,
+            },
+            body: JSON.stringify({
+                model: "grok-2-vision-latest",
+                messages: [{ role: "user", content }],
+                max_tokens: 8192,
+            }),
+        });
+
+        if (!response.ok) {
+            await handleApiError(response, "Grok");
+        }
+
+        const data = await response.json();
+        return parseImageResponse(data.choices[0].message.content);
+    }
+}
+
 export class ImageDescriptionService
     extends Service
     implements IImageDescriptionService
@@ -280,6 +325,12 @@ export class ImageDescriptionService
             ) {
                 this.provider = new OpenAIImageProvider(this.runtime);
                 elizaLogger.debug("Using openai for vision model");
+            } else if (
+                this.runtime.imageVisionModelProvider ===
+                ModelProviderName.GROK
+            ) {
+                this.provider = new GrokImageProvider(this.runtime);
+                elizaLogger.debug("Using grok for vision model");
             } else {
                 elizaLogger.error(
                     `Unsupported image vision model provider: ${this.runtime.imageVisionModelProvider}`
