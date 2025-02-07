@@ -127,11 +127,14 @@ const imageGeneration: Action = {
         elizaLogger.log("User ID:", userId);
 
         const CONTENT = message.content.text;
+        const KNOWLEDGE = state.knowledge;
+        const BIO = state.bio;
+        const MESSAGES = state.recentMessages;
         const IMAGE_SYSTEM_PROMPT = `You are an expert in writing prompts for AI art generation. You excel at creating detailed and creative visual descriptions. Incorporating specific elements naturally. Always aim for clear, descriptive language that generates a creative picture. Your output should only contain the description of the image contents, but NOT an instruction like "create an image that..."`;
-        const STYLE = "futuristic with vibrant colors";
+        const STYLE : string = options.stylePreset || runtime.character?.settings?.imageSettings?.stylePreset || "Spongebob Squarepants style";
 
-        const IMAGE_PROMPT_INPUT = `You are tasked with generating an image prompt based on a content and a specified style.
-            Your goal is to create a detailed and vivid image prompt that captures the essence of the content while incorporating an appropriate subject based on your analysis of the content.\n\nYou will be given the following inputs:\n<content>\n${CONTENT}\n</content>\n\n<style>\n${STYLE}\n</style>\n\nA good image prompt consists of the following elements:\n\n
+        const IMAGE_PROMPT_INPUT = `You are tasked with generating an image prompt based on a content (which includes related knowledge and a bio of the character generating the image) and a specified style.
+            Your goal is to create a detailed and vivid image prompt that captures the essence of the content while incorporating an appropriate subject based on your analysis of the content.\n\nYou will be given the following inputs:\n<content>\n${CONTENT}\n</content>\n\n<knowledge>\n${KNOWLEDGE}\n</knowledge>\n\n<bio>\n${BIO}\n</bio>\n\n<recentMessages>\n${MESSAGES}\n</recentMessages>\n\nA good image prompt consists of the following elements:\n\n
 
 1. Main subject
 2. Detailed description
@@ -140,7 +143,7 @@ const imageGeneration: Action = {
 5. Composition
 6. Quality modifiers
 
-To generate the image prompt, follow these steps:\n\n1. Analyze the content text carefully, identifying key themes, emotions, and visual elements mentioned or implied.
+To generate the image prompt, follow these steps:\n\n1. Analyze the content, recent messages, knowledge about the content and bio text carefully, identifying key themes, emotions, and visual elements mentioned or implied.
 \n\n
 
 2. Determine the most appropriate main subject by:
@@ -159,20 +162,20 @@ To generate the image prompt, follow these steps:\n\n1. Analyze the content text
 
 7. Plan a composition that effectively showcases the subject and captures the content's essence.
 
-8. Incorporate the specified style into your description, considering how it affects the overall look and feel of the image.
+8. If a style is specified in the content incorporate it into your description. If a style is not specified, use this style: ${STYLE}
 
 9. Use concrete nouns and avoid abstract concepts when describing the main subject and elements of the scene.
 
 Construct your image prompt using the following structure:\n\n
-1. Main subject: Describe the primary focus of the image based on your analysis
+1. Main subject: Describe the primary focus of the image based on your analysis, include as much details as possible especially if they are provided in the inputs
 2. Environment: Detail the setting or background
 3. Lighting: Specify the type and quality of light in the scene
 4. Colors: Mention the key colors and their relationships
 5. Mood: Convey the overall emotional tone
 6. Composition: Describe how elements are arranged in the frame
-7. Style: Incorporate the given style into the description
+7. Style: if the content specifies a style, incorporate it into your prompt if not use this style : ${STYLE}
 
-Ensure that your prompt is detailed, vivid, and incorporates all the elements mentioned above while staying true to the content and the specified style. LIMIT the image prompt 50 words or less. \n\nWrite a prompt. Only include the prompt and nothing else.`;
+Ensure that your prompt is detailed, vivid, and incorporates all the elements mentioned above while staying true to the content and the specified style. LIMIT the image prompt 200 words or less. \n\nWrite a prompt. Only include the prompt and nothing else.`;
 
         const imagePrompt = await generateText({
             runtime,
