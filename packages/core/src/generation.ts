@@ -252,6 +252,8 @@ export async function generateText({
 
     elizaLogger.log("Generating text...");
 
+    elizaLogger.info("CONTEXT:", context);
+
     elizaLogger.info("Generating text with options:", {
         modelProvider: runtime.modelProvider,
         model: modelClass,
@@ -435,7 +437,11 @@ export async function generateText({
                     onStepFinish: onStepFinish,
                     maxSteps: maxSteps,
                     temperature: temperature,
-                    maxTokens: max_response_length,
+                    //Check if provider is OPENAI, if so use maxCompletionTokens instead of maxTokens
+                    maxTokens: provider === ModelProviderName.OPENAI ? undefined : max_response_length,
+                    experimental_providerMetadata : provider === ModelProviderName.OPENAI ? {
+                        openai : { maxCompletionTokens : max_response_length}
+                     } : undefined,
                     frequencyPenalty: frequency_penalty,
                     presencePenalty: presence_penalty,
                     experimental_telemetry: experimental_telemetry,
