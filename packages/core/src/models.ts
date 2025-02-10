@@ -9,6 +9,14 @@ import {
 } from "./types.ts";
 
 export const models: Models = {
+    [ModelProviderName.LOCAL_COMFYUI]: {
+        endpoint: settings.COMFYUI_ULR || "http://192.168.3.146:8188",
+        model: {
+            [ModelClass.IMAGE]: {
+                name: "flux-dev-with-pplora",
+            },
+        }
+    },
     [ModelProviderName.OPENAI]: {
         endpoint: settings.OPENAI_API_URL || "https://api.openai.com/v1",
         model: {

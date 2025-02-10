@@ -52,6 +52,8 @@ import {
 } from "./types.ts";
 import { fal } from "@fal-ai/client";
 import { tavily } from "@tavily/core";
+import { ComfyApi, PromptBuilder, CallWrapper } from "@saintno/comfyui-sdk"
+import PPFluxTextToImage from "./cui_workflows/Flux-Dev-With-PPLora.json"
 
 type Tool = CoreTool<any, any>;
 type StepResult = AIStepResult<any>;
@@ -1672,6 +1674,56 @@ export const generateImage = async (
                 console.error(error);
                 return { success: false, error: error };
             }
+        } else if (runtime.imageModelProvider === ModelProviderName.LOCAL_COMFYUI) {
+            const randomInt = (min: number, max: number) => {
+                return Math.floor(Math.random() * (max - min + 1) + min);
+              };
+
+            function runComfyUI(api, workflow) {
+                return new Promise<Record<string, any>>((resolve, reject) => {
+                  new CallWrapper(api, workflow)
+                    .onPending(() => console.log("ComfyUI: Task is pending"))
+                    .onStart(() => console.log("ComfyUI: Task is started"))
+                    .onPreview((blob) => console.log(blob))
+                    .onFinished((data) => {
+                      console.log("ComfyUI: Finished :", data.images?.images.map((img: any) => api.getPathImage(img)));
+                      resolve(data); // Resolve the promise with the finished data
+                    })
+                    .onProgress((info) => console.log("ComfyUI: Processing node", info.node, `${info.value}/${info.max}`))
+                    .onFailed((err) => {
+                      console.log("ComfyUI: Task is failed", err);
+                      reject(err); // Reject the promise if the task fails
+                    })
+                    .run();
+                });
+              }
+
+            const comfyui = new ComfyApi(runtime.getSetting("COMFYUI_ULR") || "http://192.168.3.146:8188").init();
+            const workflow = new PromptBuilder(
+                PPFluxTextToImage as any,
+                ["noise_seed", "positive"],
+                ["images"]
+            ).setInputNode("noise_seed", "25.inputs.noise_seed")
+            .setInputNode("positive", "6.inputs.text")
+            .setOutputNode("images", "9")
+            .input("noise_seed", randomInt(10000000000, 999999999999))
+            .input("positive", data.prompt);
+
+            elizaLogger.info("Calling ComfyUI...");
+
+            const result = await runComfyUI(comfyui, workflow);
+            if (result) {
+                elizaLogger.info("ComfyUI returned a result");
+                const imagePromises = result.images?.images.map(async (image) => {
+                    const blob = await comfyui.getImage(image);
+                    const arrayBuffer = await blob.arrayBuffer();
+                    const base64 = Buffer.from(arrayBuffer).toString("base64");
+                    return `data:image/png;base64,${base64}`;
+                })
+                const base64s = await Promise.all(imagePromises);
+                return { success : true, data : base64s };
+            }
+            return { success: false, error: "No images generated" };
         } else {
             let targetSize = `${data.width}x${data.height}`;
             if (
@@ -1701,7 +1753,7 @@ export const generateImage = async (
             return { success: true, data: base64s };
         }
     } catch (error) {
-        console.error(error);
+        console.error("GENERATE IMAGE ERROR:", error);
         return { success: false, error: error };
     }
 };
