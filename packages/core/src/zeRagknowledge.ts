@@ -233,7 +233,7 @@ export class ZeroEntropyRAGKnowledgeManager implements IRAGKnowledgeManager {
                     collection_name: collectionName,
                     query: searchQuery,
                     k: params.limit || this.defaultRAGMatchCount,
-                    precise_responses: false,
+                    precise_responses: true,
                 });
                 elizaLogger.info("ZE Knowledge search results : " + response.results);
 
@@ -317,6 +317,7 @@ export class ZeroEntropyRAGKnowledgeManager implements IRAGKnowledgeManager {
             collection_name: collectionName,
             query: params.searchText,
             k: params.match_count || this.defaultRAGMatchCount,
+            precise_responses: true,
         });
         elizaLogger.info("Search results : " + response.results);
         return response.results.map((result) => ({
