@@ -53,7 +53,7 @@ import {
 import { fal } from "@fal-ai/client";
 import { tavily } from "@tavily/core";
 import { ComfyApi, PromptBuilder, CallWrapper } from "@saintno/comfyui-sdk"
-import PPFluxTextToImage from "./cui_workflows/Flux-Dev-With-PPLora.json"
+import PPFluxTextToImage from "./cui_workflows/Flux-Dev-With-PPLora-v3.json"
 
 type Tool = CoreTool<any, any>;
 type StepResult = AIStepResult<any>;
