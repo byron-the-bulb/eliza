@@ -6,7 +6,8 @@ import {
     IRAGKnowledgeManager,
     RAGKnowledgeItem,
     UUID,
-    ModelClass
+    ModelClass,
+    KnowledgeScope
 } from "./types.ts";
 import { stringToUuid } from "./uuid.ts";
 import { ZeroEntropy }  from 'zeroentropy';
@@ -341,6 +342,17 @@ export class ZeroEntropyRAGKnowledgeManager implements IRAGKnowledgeManager {
         );
     }
 
+    async cleanupDeletedKnowledgeFiles() {
+        throw new Error("Method not implemented.");
+    }
+
+    public generateScopedId(path: string, isShared: boolean): UUID {
+        // Prefix the path with scope before generating UUID to ensure different IDs for shared vs private
+        const scope = isShared ? KnowledgeScope.SHARED : KnowledgeScope.PRIVATE;
+        const scopedPath = `${scope}-${path}`;
+        return stringToUuid(scopedPath);
+    }
+
     async processFile(file: {
         path: string;
         content: string;
@@ -384,7 +396,7 @@ export class ZeroEntropyRAGKnowledgeManager implements IRAGKnowledgeManager {
             // Add the document to ZeroEntropy's RAG storage.
             const response = await this.zclient.documents.add({
                 collection_name: collectionName,
-                path: stringToUuid(file.path),
+                path: this.generateScopedId(file.path, file.isShared),
                 content: contentPayload,
                 metadata: {
                     timestamp: new Date().toISOString(),

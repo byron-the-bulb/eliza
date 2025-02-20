@@ -488,7 +488,7 @@ export class AgentRuntime implements IAgentRuntime {
                 this.character.knowledge,
             );
 
-            if (this.character.settings.ragKnowledge) {
+            if (this.character.settings.ragKnowledge || this.character.settings.zeRagKnowledge) {
                 // Type guards with logging for each knowledge type
                 const [directoryKnowledge, pathKnowledge, stringKnowledge] =
                     this.character.knowledge.reduce(
