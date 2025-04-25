@@ -70,13 +70,12 @@ export const currentNewsAction: Action = {
 
                 return uniqueArticles.map((article, index) => {
                     const content = article.description || 'No content available';
-                    const urlDomain = article.url ? new URL(article.url).hostname : '';
                     return [
                         `📰 Article ${index + 1}`,
                         '━━━━━━━━━━━━━━━━━━━━━━',
                         `📌 **${article.title || 'No title'}**\n`,
                         `📝 ${content}\n`,
-                        `🔗 Read more at: ${urlDomain}`
+                        `🔗 Read article here: ${article.url}`
                     ].join('\n');
                 }).join('\n');
             } catch (error) {

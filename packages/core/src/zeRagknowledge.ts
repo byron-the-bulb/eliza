@@ -1,6 +1,7 @@
 import { embed } from "./embedding.ts";
 import { splitChunks } from "./generation.ts";
 import elizaLogger from "./logger.ts";
+import crypto from 'crypto';
 import {
     IAgentRuntime,
     IRAGKnowledgeManager,
@@ -12,6 +13,7 @@ import {
 import { stringToUuid } from "./uuid.ts";
 import { ZeroEntropy }  from 'zeroentropy';
 import { generateText } from "./generation.ts";
+import { P } from "pino";
 
 
 
@@ -31,6 +33,11 @@ export class ZeroEntropyRAGKnowledgeManager implements IRAGKnowledgeManager {
     tableName: string;
 
     zclient: ZeroEntropy;
+
+    /**
+     * In-memory storage for document metadata
+     */
+    private documentMetadata: Map<string, Record<string, any>> = new Map();
 
     /**
      * Constructs a new KnowledgeManager instance.
@@ -198,21 +205,44 @@ export class ZeroEntropyRAGKnowledgeManager implements IRAGKnowledgeManager {
         elizaLogger.info("Getting knowledge for agentId : " + agentId);
         elizaLogger.info("Query : [" + params.query + "] id : [" + params.id + "]");
 
-        const collectionName = this.runtime.agentId;
+        const collectionName = this.runtime.character.settings?.zeRagKnowledgeCollectionName || this.runtime.agentId;
         if (params.id) {
             try {
                 const response = await this.zclient.documents.getInfo({
                     collection_name: collectionName,
                     path: params.id,
+                    include_content: false
                 });
                 elizaLogger.info("Knowledge found for id : " + params.id);
+                
+                // Make sure we have valid content to avoid 'Cannot read properties of null' errors
+                const documentContent = response.document.content || '';
+
+                //if present add metadata to local memory
+                if (response.document.metadata) {
+                    this.documentMetadata.set(params.id, response.document.metadata);
+                }
+                
+                // Note: We return raw content instead of formatted content
+                // This is needed for proper comparison in runtime.ts
+                
+                // Get stored metadata which should include contentHash
+                const storedMetadata = this.documentMetadata.get(params.id) || {};
+                
                 return [{
                     id: stringToUuid(response.document.path),
                     agentId: agentId,
-                    content: { text: response.document.content },
+                    content: { 
+                        text: documentContent, 
+                        metadata: { 
+                            source: response.document.file_url,
+                            contentHash: response.document.metadata?.contentHash
+                        } 
+                    },
                 }];
             } catch (error) {
                 elizaLogger.info(`Knowledge ${params.id} not found:`, error);
+                return [];
             }
         }
 
@@ -234,18 +264,32 @@ export class ZeroEntropyRAGKnowledgeManager implements IRAGKnowledgeManager {
                     collection_name: collectionName,
                     query: searchQuery,
                     k: params.limit || this.defaultRAGMatchCount,
-                    precise_responses: true,
+                    precise_responses: false,
                 });
                 elizaLogger.info("ZE Knowledge search results : " + response.results);
 
-                return response.results.map((result) => ({
-                    id: stringToUuid(result.path),
-                    agentId: agentId, //need to query metadata for agentId
-                    score: result.score,
-                    content: {
-                        text: result.content,
-                    },
-                }));
+                return response.results.map((result) => {
+                    // Make sure we have valid content to avoid 'Cannot read properties of null' errors
+                    const resultContent = result.content || '';
+                    
+                    // Format the content with metadata if available
+                    let formattedContent = resultContent;
+                    const metadata = this.documentMetadata.get(result.path);
+                    if (metadata) {
+                        formattedContent = this.formatContentWithMetadata(resultContent, metadata);
+                    } else {
+                        elizaLogger.warn(`Metadata not found for ${result.path}`);
+                    }
+                    
+                    return {
+                        id: stringToUuid(result.path),
+                        agentId: agentId,
+                        score: result.score,
+                        content: {
+                            text: formattedContent,
+                        },
+                    };
+                });
             } catch (error) {
                 elizaLogger.error(`[RAG Search Error] ${error}`);
                 return [];
@@ -262,7 +306,7 @@ export class ZeroEntropyRAGKnowledgeManager implements IRAGKnowledgeManager {
             return;
         }
 
-        const collectionName = this.runtime.agentId;
+        const collectionName = this.runtime.character.settings?.zeRagKnowledgeCollectionName || this.runtime.agentId;
         elizaLogger.info("Creating collection : " + collectionName);
         try {
             await this.zclient.collections.add({
@@ -288,7 +332,7 @@ export class ZeroEntropyRAGKnowledgeManager implements IRAGKnowledgeManager {
             while (!indexed) {
                 const status = await this.zclient.documents.getInfo({
                     collection_name: collectionName,
-                    path: "docs/"+item.id+".txt",
+                    path: item.id,
                 });
 
                 if (status.document.index_status === "indexed") {
@@ -312,7 +356,7 @@ export class ZeroEntropyRAGKnowledgeManager implements IRAGKnowledgeManager {
         match_count?: number;
         searchText?: string;
     }): Promise<RAGKnowledgeItem[]> {
-        const collectionName = this.runtime.agentId;
+        const collectionName = this.runtime.character.settings?.zeRagKnowledgeCollectionName || this.runtime.agentId;
         elizaLogger.info("Searching ZeroEntropy for : " + params.searchText);
         const response = await this.zclient.queries.topSnippets({
             collection_name: collectionName,
@@ -332,18 +376,29 @@ export class ZeroEntropyRAGKnowledgeManager implements IRAGKnowledgeManager {
     }
 
     async removeKnowledge(id: UUID): Promise<void> {
-        await this.runtime.databaseAdapter.removeKnowledge(id);
+        elizaLogger.info("Removing knowledge : " + id);
+        try {
+            const collectionName = this.runtime.character.settings?.zeRagKnowledgeCollectionName || this.runtime.agentId;
+            await this.zclient.documents.delete({
+                collection_name: collectionName,
+                path: id,
+            });
+        } catch (error) {
+            elizaLogger.warn(`Error removing knowledge ${id}:`, error);
+        }
     }
 
     async clearKnowledge(shared?: boolean): Promise<void> {
-        await this.runtime.databaseAdapter.clearKnowledge(
-            this.runtime.agentId,
-            shared ? shared : false
-        );
+        /*
+        const collectionName = this.runtime.agentId;
+        await this.zclient.collections.delete({
+            collection_name: collectionName,
+        });
+        */
     }
 
     async cleanupDeletedKnowledgeFiles() {
-        throw new Error("Method not implemented.");
+        //throw new Error("Method not implemented.");
     }
 
     public generateScopedId(path: string, isShared: boolean): UUID {
@@ -353,17 +408,133 @@ export class ZeroEntropyRAGKnowledgeManager implements IRAGKnowledgeManager {
         return stringToUuid(scopedPath);
     }
 
+    /**
+     * Validates if metadata contains the required fields
+     * @param metadata Metadata to validate
+     * @param path Path of the document (for logging)
+     * @returns true if valid, false otherwise
+     */
+    private validateMetadata(metadata: Record<string, any> | undefined, path: string): boolean {
+        if (!metadata) {
+            return false;
+        }
+        
+        // Check for required fields
+        const { title, author, type } = metadata;
+        if (!title || !author || !type) {
+            elizaLogger.warn(`Missing required metadata fields for ${path}. Required: title, author, type`);
+            return false;
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Check if a document exists in Zero Entropy
+     * @param documentPath Path of the document to check
+     * @param isShared Whether the document is shared
+     * @returns true if the document exists, false otherwise
+     */
+    async documentExists(documentPath: string, isShared?: boolean): Promise<boolean> {
+        try {
+            const collectionName = this.runtime.character.settings?.zeRagKnowledgeCollectionName || this.runtime.agentId;
+            const scopedId = this.generateScopedId(documentPath, isShared);
+            
+            // Get the document info (don't need content for existence check)
+            const response = await this.zclient.documents.getInfo({
+                collection_name: collectionName,
+                path: scopedId,
+                include_content: false // No need for content when just checking existence
+            });
+            
+            // If we get a response, the document exists
+            return true;
+        } catch (error) {
+            // If we get an error, the document doesn't exist
+            return false;
+        }
+    }
+    
+
+    /**
+     * Calculate hash for content (Buffer or string)
+     * @param content The content to hash
+     * @returns SHA256 hash of the content
+     */
+    private calculateContentHash(content: Buffer | string): string {
+        return crypto.createHash('sha256').update(content).digest('hex');
+    }
+
+    /**
+     * Format content with metadata
+     * @param content The raw content text
+     * @param metadata The metadata to include
+     * @returns Formatted content that includes metadata context
+     */
+    private formatContentWithMetadata(content: string, metadata: Record<string, any>): string {
+        let metadataIntro = "";
+        
+        // Format depends on available metadata
+        if (metadata.title && metadata.author) {
+            if (metadata.type === 'book' || metadata.type === 'novel') {
+                metadataIntro = `The ${metadata.type} "${metadata.title}" by ${metadata.author}, mentions the following: `;
+            } else if (metadata.type === 'article' || metadata.type === 'paper') {
+                metadataIntro = `The ${metadata.type} titled "${metadata.title}" by ${metadata.author}, states: `;
+            } else if (metadata.type === 'report') {
+                metadataIntro = `According to the report "${metadata.title}" by ${metadata.author}: `;
+            } else {
+                metadataIntro = `From "${metadata.title}" by ${metadata.author}: `;
+            }
+        } else if (metadata.title) {
+            metadataIntro = `From "${metadata.title}": `;
+        } else if (metadata.author) {
+            metadataIntro = `Written by ${metadata.author}: `;
+        }
+        
+        return metadataIntro + content;
+    }
+
+    /**
+     * Update document metadata in ZeroEntropy
+     * @param documentId Document ID (path)
+     * @param metadata New metadata to apply
+     */
+    async updateDocumentMetadata(documentId: string, metadata: Record<string, any>): Promise<void> {
+        try {
+            const collectionName = this.runtime.character.settings?.zeRagKnowledgeCollectionName || this.runtime.agentId;
+            
+            // Check for required fields
+            if (!this.validateMetadata(metadata, documentId)) {
+                elizaLogger.warn(`Cannot update metadata for ${documentId}: missing required fields (title, author, type)`);
+                return;
+            }
+            
+            // Update the document metadata
+            await this.zclient.documents.update({
+                collection_name: collectionName,
+                path: documentId,
+                metadata: metadata
+            });
+            
+            elizaLogger.info(`Updated metadata for document ${documentId}`);
+        } catch (error) {
+            elizaLogger.error(`Error updating metadata for document ${documentId}:`, error);
+            throw error;
+        }
+    }
+
     async processFile(file: {
         path: string;
-        content: string;
+        content: Buffer | string;
         type: "pdf" | "md" | "txt";
         isShared?: boolean;
+        metadata?: Record<string, any>;
     }): Promise<void> {
         const startTime = Date.now();
         elizaLogger.info(`[File Progress] Starting ${file.path}`);
 
         try {
-            const collectionName = this.runtime.agentId;
+            const collectionName = this.runtime.character.settings?.zeRagKnowledgeCollectionName || this.runtime.agentId;
 
             // Ensure the collection exists.
             try {
@@ -376,51 +547,99 @@ export class ZeroEntropyRAGKnowledgeManager implements IRAGKnowledgeManager {
                 elizaLogger.info(`Collection '${collectionName}' may already exist. Proceeding...`);
             }
 
+            // Validate metadata
+            if (!this.validateMetadata(file.metadata, file.path)) {
+                elizaLogger.warn(`Skipping upload for ${file.path} - missing required metadata (title, author, type)`);
+                return;
+            }
+
+            // Generate the scoped document ID
+            const documentId = this.generateScopedId(file.path, file.isShared);
+            
+            // Check if document already exists
+            const documentExists = await this.documentExists(file.path, file.isShared);
+            
+            // Prepare standard metadata
+            const standardMetadata = {
+                timestamp: new Date().toISOString(),
+                fileSizeKB: (Buffer.isBuffer(file.content) 
+                    ? file.content.length 
+                    : new TextEncoder().encode(file.content as string).length / 1024).toFixed(2) + " KB",
+                file_type: file.type,
+                agentId: this.runtime.agentId,
+            };
+            
+            // Calculate content hash
+            const contentHash = this.calculateContentHash(file.content);
+            
+            // Combine standard metadata with document-specific metadata and content hash
+            const fullMetadata = {
+                ...standardMetadata,
+                ...file.metadata,
+                contentHash: contentHash
+            };
+            
+            // Store metadata in memory - do this regardless of whether the document exists or is being created
+            this.documentMetadata.set(documentId, fullMetadata);
+            elizaLogger.info(`Stored metadata in memory for document ${file.path} ad ${documentId}`);
+            
+            if (documentExists) {
+                elizaLogger.info(`Document ${file.path} already exists, updating metadata...`);
+                
+                try {
+                    // Update the metadata
+                    await this.updateDocumentMetadata(documentId, fullMetadata);
+                    elizaLogger.info(`Updated metadata for existing document ${file.path}`);
+                } catch (updateErr) {
+                    elizaLogger.error(`Failed to update metadata for existing document ${file.path}:`, updateErr);
+                    throw updateErr;
+                }
+                
+                const totalTime = (Date.now() - startTime) / 1000;
+                elizaLogger.info(`[Complete] Updated ${file.path} in ${totalTime.toFixed(2)}s`);
+                return;
+            }
+
+            // If we get here, the document doesn't exist yet, so we'll create it
+            
             // Prepare the content payload using the proper format.
             // PDFs are converted to Base64; text-based files are sent as plain text.
             let contentPayload: { type : any, base64_data : string} | { type : any, text : string};
             if (file.type === "pdf") {
-                const base64Content = Buffer.from(file.content).toString("base64");
+                // If content is already a Buffer, use it directly; otherwise, convert to Buffer
+                const buffer = Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content);
+                const base64Content = buffer.toString("base64");
                 contentPayload = {
                     type: "auto",
                     base64_data: base64Content,
                 } ;
             } else {
+                // For text files, convert Buffer to string if needed
+                const textContent = Buffer.isBuffer(file.content) 
+                    ? file.content.toString('utf-8') 
+                    : file.content;
                 contentPayload = {
                     type: "text",
-                    text: file.content,
+                    text: textContent,
                 };
             }
-            elizaLogger.info("Adding document to ZeroEntropy : " + file.path);
-            //elizaLogger.info("Content payload : " + contentPayload);
-            // Add the document to ZeroEntropy's RAG storage.
+            elizaLogger.info("Adding document to ZeroEntropy : " + file.path+" as " + documentId);
+            
+            // Add the document to ZeroEntropy's RAG storage with full metadata.
             const response = await this.zclient.documents.add({
                 collection_name: collectionName,
-                path: this.generateScopedId(file.path, file.isShared),
+                path: documentId,
                 content: contentPayload,
-                metadata: {
-                    timestamp: new Date().toISOString(),
-                    fileSizeKB: (new TextEncoder().encode(file.content).length / 1024).toFixed(2) + " KB",
-                    file_type: file.type,
-                    agentId: this.runtime.agentId,
-                },
+                metadata: fullMetadata,
             });
 
             const totalTime = (Date.now() - startTime) / 1000;
             elizaLogger.info(`[Complete] Processed ${file.path} in ${totalTime.toFixed(2)}s`);
             elizaLogger.info(response.message);
         } catch (error) {
-            if (
-                file.isShared &&
-                error?.code === "SQLITE_CONSTRAINT_PRIMARYKEY"
-            ) {
-                elizaLogger.info(
-                    `Shared knowledge ${file.path} already exists in storage, skipping creation`
-                );
-                return;
-            }
             elizaLogger.error(`Error processing file ${file.path}:`, error);
             throw error;
         }
+
     }
 }

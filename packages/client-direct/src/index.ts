@@ -49,9 +49,10 @@ const upload = multer({ storage /*: multer.memoryStorage() */ });
 export const messageHandlerTemplate =
     // {{goals}}
     // "# Action Examples" is already included
-    `{{actionExamples}}
-(Action examples are for reference only. Do not use the information from them in your response.)
-
+    //`{{actionExamples}}
+//(Action examples are for reference only. Do not use the information from them in your response.)
+//(If you find that information can be provided via an action do not provide it yourself)//
+`
 # Knowledge
 {{knowledge}}
 

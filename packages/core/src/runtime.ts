@@ -2,6 +2,7 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import { names, uniqueNamesGenerator } from "unique-names-generator";
 import { v4 as uuidv4 } from "uuid";
+import crypto from 'crypto';
 import {
     composeActionExamples,
     formatActionNames,
@@ -69,6 +70,35 @@ function isDirectoryItem(item: any): item is DirectoryItem {
         "directory" in item &&
         typeof item.directory === "string"
     );
+}
+
+/**
+ * Calculate hash for content (either Buffer or string)
+ * @param content The content to hash (Buffer or string)
+ * @returns SHA256 hash of the content
+ */
+function calculateContentHash(content: Buffer | string): string {
+    return crypto.createHash('sha256').update(content).digest('hex');
+}
+
+/**
+ * Fetch content from a remote URL
+ * @param url The URL to fetch content from
+ * @returns The fetched content as a Buffer
+ */
+async function fetchRemoteContent(url: string): Promise<Buffer> {
+    try {
+        elizaLogger.info(`Fetching remote content from ${url}`);
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch remote content: ${response.status} ${response.statusText}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        return Buffer.from(arrayBuffer);
+    } catch (error) {
+        elizaLogger.error(`Error fetching remote content:`, error);
+        throw error;
+    }
 }
 
 export class AgentRuntime implements IAgentRuntime {
@@ -629,7 +659,7 @@ export class AgentRuntime implements IAgentRuntime {
      * An array of knowledge items or objects containing id, path, and content.
      */
     private async processCharacterRAGKnowledge(
-        items: (string | { path: string; shared?: boolean })[],
+        items: (string | { path: string; shared?: boolean; metadata?: Record<string, any> })[],
     ) {
         let hasError = false;
 
@@ -642,10 +672,19 @@ export class AgentRuntime implements IAgentRuntime {
                 let isShared = false;
                 let contentItem = item;
 
+                // Variable to store metadata if available
+                let metadata: Record<string, any> | undefined = undefined;
+                
                 // Only treat as shared if explicitly marked
                 if (typeof item === "object" && "path" in item) {
                     isShared = item.shared === true;
                     contentItem = item.path;
+                    
+                    // Extract metadata if available in the knowledge item
+                    if (item.metadata) {
+                        metadata = item.metadata;
+                        elizaLogger.info(`Found metadata for ${contentItem}:`, metadata);
+                    }
                 } else {
                     contentItem = item;
                 }
@@ -708,9 +747,8 @@ export class AgentRuntime implements IAgentRuntime {
                         });
 
                         // Read file content
-                        const content: string = await readFile(
-                            filePath,
-                            "utf8",
+                        const content: Buffer = await readFile(
+                            filePath
                         );
                         if (!content) {
                             hasError = true;
@@ -718,26 +756,66 @@ export class AgentRuntime implements IAgentRuntime {
                         }
 
                         if (existingKnowledge.length > 0) {
-                            const existingContent =
-                                existingKnowledge[0].content.text;
-
+                            // Calculate hash of the local file content
+                            const localContentHash = calculateContentHash(content);
+                            
+                            // Hash comparison variables
+                            let contentMatches = false;
+                            let remoteContentHash = '';
+                            
+                            // Check if we have the content hash in metadata
+                            const storedContentHash = existingKnowledge[0].content.metadata?.contentHash as string;
+                            
+                            if (storedContentHash) {
+                                // Use the hash stored in metadata for comparison
+                                remoteContentHash = storedContentHash;
+                                contentMatches = localContentHash === remoteContentHash;
+                                elizaLogger.info(`Using stored content hash for comparison: ${remoteContentHash}`);
+                            } else {
+                                // No stored hash, fallback to URL-based comparison
+                                const fileUrl = existingKnowledge[0].content.metadata?.source;
+                                
+                                if (fileUrl) {
+                                    try {
+                                        // Fetch the remote file content
+                                        const remoteContent = await fetchRemoteContent(fileUrl);
+                                        
+                                        // Calculate hash of remote content
+                                        remoteContentHash = calculateContentHash(remoteContent);
+                                        
+                                        // Compare hashes instead of full content
+                                        contentMatches = localContentHash === remoteContentHash;
+                                    } catch (error) {
+                                        elizaLogger.error(`Error fetching/comparing remote content: ${error}`);
+                                        // If fetching remote content fails, fall back to assuming content changed
+                                        contentMatches = false;
+                                    }
+                                } else {
+                                    // If no URL or hash is available, compare with the stored text content
+                                    // Convert the stored text content to Buffer for consistent comparison
+                                    const existingContent = existingKnowledge[0].content.text;
+                                    const existingContentHash = calculateContentHash(Buffer.from(existingContent));
+                                    contentMatches = localContentHash === existingContentHash;
+                                }
+                            }
+                            
                             elizaLogger.debug("[RAG Compare]", {
                                 path: contentItem,
                                 knowledgeId,
                                 isShared,
-                                existingContentLength: existingContent.length,
-                                newContentLength: content.length,
-                                contentSample: content.slice(0, 100),
-                                existingContentSample: existingContent.slice(
-                                    0,
-                                    100,
-                                ),
-                                matches: existingContent === content,
+                                fileUrl: existingKnowledge[0].content.metadata?.source,
+                                hashSource: storedContentHash ? 'metadata' : (existingKnowledge[0].content.metadata?.source ? 'remote' : 'content'),
+                                localContentHash,
+                                remoteContentHash,
+                                storedContentHash: existingKnowledge[0].content.metadata?.contentHash,
+                                contentSampleBytes: content.slice(0, 20),
+                                contentSize: content.length,
+                                matches: contentMatches,
                             });
 
-                            if (existingContent === content) {
+                            if (contentMatches) {
                                 elizaLogger.info(
-                                    `${isShared ? "Shared knowledge" : "Knowledge"} ${contentItem} unchanged, skipping`,
+                                    `${isShared ? "Shared knowledge" : "Knowledge"} ${contentItem} unchanged (hash match), skipping`,
                                 );
                                 continue;
                             }
@@ -766,6 +844,7 @@ export class AgentRuntime implements IAgentRuntime {
                             content: content,
                             type: fileExtension as "pdf" | "md" | "txt",
                             isShared: isShared,
+                            metadata: metadata, // Pass the metadata if available
                         });
                     } catch (error: any) {
                         hasError = true;
@@ -1650,12 +1729,14 @@ Text: ${attachment.text}
             return null;
         });
 
+        console.log("DEBUG: Getting providers...")
         const [resolvedEvaluators, resolvedActions, providers] =
             await Promise.all([
                 Promise.all(evaluatorPromises),
                 Promise.all(actionPromises),
                 getProviders(this, message, initialState),
             ]);
+        console.log("DEBUG: Providers: ", providers)
 
         const evaluatorsData = resolvedEvaluators.filter(
             Boolean,

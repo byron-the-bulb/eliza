@@ -155,6 +155,7 @@ import { ankrPlugin } from "@elizaos/plugin-ankr";
 import { formPlugin } from "@elizaos/plugin-form";
 import { MongoClient } from "mongodb";
 import { quickIntelPlugin } from "@elizaos/plugin-quick-intel";
+import { financialDatasetsPlugin } from "@elizaos/plugin-financialdatasets";
 
 import { trikonPlugin } from "@elizaos/plugin-trikon";
 import arbitragePlugin from "@elizaos/plugin-arbitrage";
@@ -1295,10 +1296,13 @@ export async function createAgent(
             getSecret(character, "ARBITRAGE_BUNDLE_EXECUTOR_ADDRESS")
                 ? arbitragePlugin
                 : null,
+            getSecret(character, "FINANCIAL_DATASETS_API_KEY")
+                ? financialDatasetsPlugin
+                : null,
         ]
             .flat()
             .filter(Boolean),
-        providers: [],
+        providers: bootstrapPlugin.providers,
         managers: [],
         cacheManager: cache,
         fetch: logFetch,

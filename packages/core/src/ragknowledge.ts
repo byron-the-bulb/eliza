@@ -490,9 +490,11 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
         return stringToUuid(scopedPath);
     }
 
+    // content is forced to string to avoid type issues
+    // TODO: fix this
     async processFile(file: {
         path: string;
-        content: string;
+        content: string | Buffer<ArrayBufferLike>;
         type: "pdf" | "md" | "txt";
         isShared?: boolean;
     }): Promise<void> {
@@ -505,7 +507,7 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
         const content = file.content;
 
         try {
-            const fileSizeKB = new TextEncoder().encode(content).length / 1024;
+            const fileSizeKB = new TextEncoder().encode(content as string).length / 1024;
             elizaLogger.info(
                 `[File Progress] Starting ${file.path} (${fileSizeKB.toFixed(2)} KB)`
             );
@@ -518,7 +520,7 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
 
             // Step 1: Preprocessing
             //const preprocessStart = Date.now();
-            const processedContent = this.preprocess(content);
+            const processedContent = this.preprocess(content as string);
             timeMarker("Preprocessing");
 
             // Step 2: Main document embedding
@@ -534,7 +536,7 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
                 id: scopedId,
                 agentId: this.runtime.agentId,
                 content: {
-                    text: content,
+                    text: content as string,
                     metadata: {
                         source: file.path,
                         type: file.type,

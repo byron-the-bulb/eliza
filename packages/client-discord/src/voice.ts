@@ -29,6 +29,7 @@ import {
     getVoiceConnections,
     joinVoiceChannel,
     entersState,
+    AudioPlayerStatus
 } from "@discordjs/voice";
 import {
     type BaseGuildVoiceChannel,
@@ -39,6 +40,12 @@ import {
     type VoiceChannel,
     type VoiceState,
 } from "discord.js";
+
+import path from "path";
+import { fileURLToPath } from "url";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 import EventEmitter from "events";
 import prism from "prism-media";
 import { type Readable, pipeline } from "stream";
@@ -48,6 +55,7 @@ import {
     discordVoiceHandlerTemplate,
 } from "./templates.ts";
 import { getWavHeader } from "./utils.ts";
+import * as stringSimilarity from 'string-similarity';
 
 // These values are chosen for compatibility with picovoice components
 const DECODE_FRAME_SIZE = 1024;
@@ -497,6 +505,7 @@ export class VoiceManager extends EventEmitter {
 
         this.transcriptionTimeout = setTimeout(async () => {
             this.processingVoice = true;
+            this.playTranscriptionFeedback(channel);
             try {
                 await this.processTranscription(
                     userId,
@@ -515,6 +524,28 @@ export class VoiceManager extends EventEmitter {
                 this.processingVoice = false;
             }
         }, DEBOUNCE_TRANSCRIPTION_THRESHOLD);
+    }
+
+    private async playTranscriptionFeedback(channel: BaseGuildVoiceChannel) {
+        const connection = this.getVoiceConnection(channel.guild.id);
+        if (!connection) {
+            console.log("No voice connection available for playing feedback.");
+            return;
+        }
+        try {
+            console.log("Playing transcription feedback.")
+            const feedbackPath = path.join(__dirname, 'assets', 'woop.ogg');
+            const player = createAudioPlayer();
+            const resource = createAudioResource(feedbackPath);
+            connection.subscribe(player);
+            player.play(resource);
+            player.on(AudioPlayerStatus.Idle, () => {
+                console.log("Stopped playing transcription feedback.")
+                //player.removeAllListeners();
+            });            
+        } catch (error) {
+            console.error("Error playing transcription feedback sound:", error);
+        }
     }
 
     async handleUserStream(
@@ -805,6 +836,23 @@ export class VoiceManager extends EventEmitter {
         }
     }
 
+    private isSimilarEnough(message: string, target: string): boolean {
+        if (!target || target.length === 0) return false;
+        
+        const targetLength = target.length;
+        const lowerMessage = message.toLowerCase();
+        const lowerTarget = target.toLowerCase();
+
+        // Slide a window through the message matching target length
+        for (let i = 0; i <= lowerMessage.length - targetLength; i++) {
+            const substring = lowerMessage.substring(i, i + targetLength);
+            if (stringSimilarity.compareTwoStrings(substring, lowerTarget) > 0.4) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private async _shouldRespond(
         message: string,
         userId: UUID,
@@ -820,12 +868,10 @@ export class VoiceManager extends EventEmitter {
         const nickname = member?.nickname;
 
         if (
-            lowerMessage.includes(botName as string) ||
-            lowerMessage.includes(characterName) ||
-            lowerMessage.includes(
-                this.client.user?.tag.toLowerCase() as string
-            ) ||
-            (nickname && lowerMessage.includes(nickname.toLowerCase()))
+            this.isSimilarEnough(lowerMessage, botName as string) ||
+            this.isSimilarEnough(lowerMessage, characterName) ||
+            this.isSimilarEnough(lowerMessage, this.client.user?.tag?.split('#')[0] ?? '') ||
+            (nickname && this.isSimilarEnough(lowerMessage, nickname))
         ) {
             return true;
         }

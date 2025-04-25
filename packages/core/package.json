@@ -92,7 +92,7 @@
         "together-ai": "0.7.0",
         "unique-names-generator": "4.7.1",
         "uuid": "11.0.3",
-        "zeroentropy": "0.1.0-alpha.3"
+        "zeroentropy": "file:/Users/massimo/Projects/ai/zeroentropy/zeroentropy-node"
     },
     "publishConfig": {
         "access": "public"

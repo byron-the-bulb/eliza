@@ -805,8 +805,8 @@ export async function generateText({
                     maxSteps: maxSteps,
                     temperature: temperature,
                     maxTokens: max_response_length,
-                    frequencyPenalty: frequency_penalty,
-                    presencePenalty: presence_penalty,
+                    //frequencyPenalty: frequency_penalty,
+                    //presencePenalty: presence_penalty,
                     experimental_telemetry: experimental_telemetry,
                 });
 
@@ -1985,22 +1985,67 @@ export const generateImage = async (
                 return Math.floor(Math.random() * (max - min + 1) + min);
               };
 
-            function runComfyUI(api, workflow) {
-                return new Promise<Record<string, any>>((resolve, reject) => {
-                  new CallWrapper(api, workflow)
-                    .onPending(() => console.log("ComfyUI: Task is pending"))
-                    .onStart(() => console.log("ComfyUI: Task is started"))
-                    .onPreview((blob) => console.log(blob))
-                    .onFinished((data) => {
-                      console.log("ComfyUI: Finished :", data.images?.images.map((img: any) => api.getPathImage(img)));
-                      resolve(data); // Resolve the promise with the finished data
-                    })
-                    .onProgress((info) => console.log("ComfyUI: Processing node", info.node, `${info.value}/${info.max}`))
-                    .onFailed((err) => {
-                      console.log("ComfyUI: Task is failed", err);
-                      reject(err); // Reject the promise if the task fails
-                    })
-                    .run();
+            function runComfyUI(api, workflow, maxRetries = 3, retryDelay = 2000) {
+                console.log(`[${new Date().toISOString().replace('T', ' ').split('.')[0]}] INFO: Calling ComfyUI...`);
+                
+                return new Promise<Record<string, any>>(async (resolve, reject) => {
+                  let currentRetry = 0;
+                  let lastError: any = null;
+                  
+                  // Create a function that attempts to run the ComfyUI task
+                  const attemptRun = () => {
+                    return new Promise<Record<string, any>>((attemptResolve, attemptReject) => {
+                      new CallWrapper(api, workflow)
+                        .onPending(() => console.log("ComfyUI: Task is pending"))
+                        .onStart(() => console.log("ComfyUI: Task is started"))
+                        .onPreview((blob) => console.log(blob))
+                        .onFinished((data) => {
+                          console.log("ComfyUI: Finished :", data.images?.images.map((img: any) => api.getPathImage(img)));
+                          attemptResolve(data);
+                        })
+                        .onProgress((info) => console.log("ComfyUI: Processing node", info.node, `${info.value}/${info.max}`))
+                        .onFailed((err) => {
+                          console.log("ComfyUI: Task is failed", err);
+                          attemptReject(err);
+                        })
+                        .run();
+                    });
+                  };
+                  
+                  // Retry loop
+                  while (currentRetry <= maxRetries) {
+                    try {
+                      if (currentRetry > 0) {
+                        console.log(`ComfyUI: Retry attempt ${currentRetry}/${maxRetries}`);
+                      }
+                      
+                      const result = await attemptRun();
+                      return resolve(result);
+                    } catch (error) {
+                      lastError = error;
+                      
+                      // Check if we've reached max retries
+                      if (currentRetry >= maxRetries) {
+                        console.log(`ComfyUI: Maximum retries (${maxRetries}) reached. Giving up.`);
+                        break;
+                      }
+                      
+                      // Special handling for DisconnectedError - this is likely transient
+                      const isDisconnectError = error.toString().includes('DisconnectedError');
+                      if (isDisconnectError) {
+                        console.log(`ComfyUI: Detected disconnect error, retrying in ${retryDelay}ms...`);
+                      } else {
+                        console.log(`ComfyUI: Error occurred, retrying in ${retryDelay}ms...`);
+                      }
+                      
+                      // Wait before next retry
+                      await new Promise(r => setTimeout(r, retryDelay));
+                      currentRetry++;
+                    }
+                  }
+                  
+                  // If we get here, all retries have failed
+                  reject(lastError);
                 });
               }
 

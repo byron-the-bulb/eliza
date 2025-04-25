@@ -173,8 +173,8 @@ export const models: Models = {
                 stop: [],
                 maxInputTokens: 128000,
                 maxOutputTokens: 8192,
-                frequency_penalty: 0.4,
-                presence_penalty: 0.4,
+                //frequency_penalty: 0.4,
+                //presence_penalty: 0.4,
                 temperature: 0.7,
             },
             [ModelClass.MEDIUM]: {
@@ -182,8 +182,8 @@ export const models: Models = {
                 stop: [],
                 maxInputTokens: 128000,
                 maxOutputTokens: 8192,
-                frequency_penalty: 0.4,
-                presence_penalty: 0.4,
+                //frequency_penalty: 0.4,
+                //presence_penalty: 0.4,
                 temperature: 0.7,
             },
             [ModelClass.LARGE]: {
@@ -191,8 +191,8 @@ export const models: Models = {
                 stop: [],
                 maxInputTokens: 128000,
                 maxOutputTokens: 32000,
-                frequency_penalty: 0.4,
-                presence_penalty: 0.4,
+                //frequency_penalty: 0.4,
+                //presence_penalty: 0.4,
                 temperature: 0.7,
             },
             [ModelClass.EMBEDDING]: {

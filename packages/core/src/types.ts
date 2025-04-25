@@ -851,6 +851,7 @@ export type Character = {
         transcription?: TranscriptionProvider;
         ragKnowledge?: boolean;
         zeRagKnowledge?: boolean;
+        zeRagKnowledgeCollectionName?: string;
     };
 
     /** Optional client-specific config */
@@ -1224,9 +1225,10 @@ export interface IRAGKnowledgeManager {
     clearKnowledge(shared?: boolean): Promise<void>;
     processFile(file: {
         path: string;
-        content: string;
+        content: Buffer | string;
         type: "pdf" | "md" | "txt";
         isShared: boolean;
+        metadata?: Record<string, any>;
     }): Promise<void>;
     cleanupDeletedKnowledgeFiles(): Promise<void>;
     generateScopedId(path: string, isShared: boolean): UUID;
